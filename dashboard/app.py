@@ -6,6 +6,10 @@ import plotly.express as px
 import sys
 import os
 import importlib.util
+import io
+from datetime import datetime
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
 
 # === Get paths ===
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -17,6 +21,9 @@ def load_module_from_file(file_name):
     file_path = os.path.join(src_path, file_name)
     spec = importlib.util.spec_from_file_location(file_name.replace('.py', ''), file_path)
     module = importlib.util.module_from_spec(spec)
+    # Register module in sys.modules so intra-package imports succeed when
+    # loading modules dynamically (e.g. predict.py importing model)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -90,7 +97,7 @@ if uploaded_file:
     
     fig = px.line(forecast_df, x='Date', y=['Average Load', 'Maximum Load', 'Minimum Load'],
                   title="Daily Load Forecast")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -138,17 +145,36 @@ if uploaded_file:
     
     fig2 = px.bar(comp_df, x='Model', y=['RMSE (MW)', 'MAPE (%)'],
                   barmode='group', title="Model Performance Comparison")
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width='stretch')
     
     st.subheader("📄 Generate Report")
     if st.button("Generate PDF Report"):
-        st.success("✅ Report generated successfully!")
-        st.download_button(
-            label="Download Report",
-            data="SmartEnergy Report",
-            file_name="SmartEnergy_Report.pdf",
-            mime="application/pdf"
-        )
+        try:
+            buffer = io.BytesIO()
+            c = canvas.Canvas(buffer, pagesize=letter)
+            c.setFont("Helvetica-Bold", 16)
+            c.drawString(72, 720, "SmartEnergy Report")
+            c.setFont("Helvetica", 10)
+            c.drawString(72, 700, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            c.drawString(72, 680, f"Selected Model: {selected_model}")
+            c.drawString(72, 660, f"Average Load (sample): {avg_load.mean():.2f} MW")
+            c.drawString(72, 640, f"Max Load (sample): {max_load.mean():.2f} MW")
+            c.drawString(72, 620, f"Min Load (sample): {min_load.mean():.2f} MW")
+            c.drawString(72, 600, f"CO2 Saved (sample): {carbon_data['carbon_saved_kg']:.2f} kg")
+            c.showPage()
+            c.save()
+            pdf_bytes = buffer.getvalue()
+            buffer.close()
+
+            st.success("✅ Report generated successfully!")
+            st.download_button(
+                label="Download Report",
+                data=pdf_bytes,
+                file_name="SmartEnergy_Report.pdf",
+                mime="application/pdf"
+            )
+        except Exception as e:
+            st.error(f"❌ Failed to generate report: {e}")
 
 else:
     st.info("📂 Please upload a CSV file to begin analysis")
